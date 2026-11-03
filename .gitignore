@@ -4,5 +4,4 @@
 node_modules
 
 # The site's build (mise run build), which the Pages workflow builds and uploads itself.
-# From spike-html-hosting (cb0511c): .gitignore, its dist/ entry.
 dist/
