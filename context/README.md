@@ -12,6 +12,8 @@ context records only working knowledge the code does not express.
   adapted from spike-html-hosting to build Markdown pages: `index.html`, `vite.config.ts`,
   `mise.toml`, `tsconfig.json`, and `test/browser/site.test.ts`. spike-html-hosting-sqlate copies
   all of them, so a change here is copied there by hand.
+- This site owns the site layout, `site.css`. spike-html-hosting-sqlate and spike-html-hosting
+  copy it unchanged, so a change here is copied to both by hand.
 - spike-html-hosting owns the remaining build, check, and deploy files, and this site copies them
   unchanged: a change there is copied here by hand.
 - The planned `template` task moves the shared files into a site SDK released by tag.
