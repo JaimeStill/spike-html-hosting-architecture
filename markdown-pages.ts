@@ -5,8 +5,11 @@
 // naming its output by its path under the root. Nothing is written to the working tree.
 //
 // A file's page is its path with .md turned to .html, except a README.md, which is its
-// directory's index.html, so the copied tree's root README.md is the site's index. The leading
-// YAML front matter is parsed, never rendered: its name is the page's title. Headings carry
+// directory's index.html, so the copied tree's root README.md is the site's index. A file's
+// leading YAML front matter, when it has one, is parsed and never rendered as body text: the page
+// shows it, as GitHub does, as a table of its keys and their values, one row a key in source
+// order, escaped, ahead of the body. The page's title is the front matter's name, or, with no name, the text of the file's
+// first h1; a file with neither fails the build, naming it. Headings carry
 // GitHub's ids (marked-gfm-heading-id), so a fragment written against the source on GitHub
 // resolves here. A relative link to a copied file is rewritten to that file's page, relative to
 // the linking page, its fragment kept; one to a file listed as external, present in the source
@@ -20,7 +23,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
 
-import { Marked } from "marked";
+import { Marked, Parser } from "marked";
+import type { Tokens } from "marked";
 import { gfmHeadingId } from "marked-gfm-heading-id";
 import { normalizePath } from "vite";
 import type { Plugin } from "vite";
@@ -49,9 +53,10 @@ export interface Source {
   ref: string;
 }
 
-/** A rendered file: its front matter and its body's HTML. */
+/** A rendered file: its front matter, null when it has none, its title, and its body's HTML. */
 export interface Rendered {
-  data: Record<string, unknown>;
+  data: Record<string, unknown> | null;
+  title: string;
   html: string;
 }
 
@@ -91,45 +96,93 @@ function place(href: string, path: string, source: Source): string {
   );
 }
 
-/** The file's leading front matter, parsed, and its body after it; throws when it has none, or
- * when the front matter's name isn't a string. */
-function frontMatter(path: string, text: string): { data: Record<string, unknown>; body: string } {
+/** The file's leading front matter, parsed, null when it has none, and its body after it; throws
+ * when the front matter isn't a mapping, or holds a name that isn't a string. */
+function frontMatter(
+  path: string,
+  text: string,
+): { data: Record<string, unknown> | null; body: string } {
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
-  if (!match) throw new Error(`markdown-pages: ${path} has no leading --- front matter`);
-  const data: unknown = parse(match[1]);
-  if (
-    typeof data !== "object" ||
-    data === null ||
-    typeof (data as { name?: unknown }).name !== "string"
-  ) {
-    throw new Error(`markdown-pages: ${path}'s front matter has no name`);
+  if (!match) return { data: null, body: text };
+  const data: unknown = parse(match[1]) ?? {};
+  if (typeof data !== "object" || Array.isArray(data)) {
+    throw new Error(`markdown-pages: ${path}'s front matter isn't a mapping of keys to values`);
+  }
+  const name = (data as { name?: unknown }).name;
+  if (name !== undefined && typeof name !== "string") {
+    throw new Error(`markdown-pages: ${path}'s front matter name isn't a string`);
   }
   return { data: data as Record<string, unknown>, body: text.slice(match[0].length) };
 }
 
-/** Renders the copied file at path, its text given, with its links placed against source. */
+/** Renders the copied file at path, its text given, with its links placed against source; throws
+ * when the file has neither a front matter name nor an h1 to title it. */
 export function render(path: string, text: string, source: Source): Rendered {
   const { data, body } = frontMatter(path, text);
+  let h1: Tokens.Heading | undefined;
   // gfmHeadingId resets its slugger in its preprocess hook on every parse, so each page's ids
-  // count their duplicates from none, as GitHub's do.
+  // count their duplicates from none, as GitHub's do. walkTokens visits in document order, so the
+  // first depth-1 heading it meets is the file's first h1.
   const marked = new Marked(gfmHeadingId(), {
     walkTokens(token) {
       if (token.type === "link") token.href = place(token.href, path, source);
+      if (token.type === "heading" && token.depth === 1) h1 ??= token as Tokens.Heading;
     },
   });
-  return { data, html: marked.parse(body, { async: false }) };
+  const html = marked.parse(body, { async: false });
+  // The h1's inline content as plain text, its emphasis, code, and links reduced to their text,
+  // by the parser's own text renderer, which renders nested inline tokens back through it.
+  const parser = new Parser();
+  const title =
+    (data?.name as string | undefined) ??
+    (h1 && parser.parseInline(h1.tokens, parser.textRenderer).trim());
+  if (!title) {
+    throw new Error(
+      `markdown-pages: ${path} has neither a front matter name nor an h1 to title it`,
+    );
+  }
+  return { data, title, html };
 }
 
 /** Escapes text for an HTML text node. */
 const escape = (text: string): string =>
   text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-/** Fills the shell with a rendered page: its title the front matter's name, its body in <main>. */
-function fill(shell: string, { data, html }: Rendered): string {
-  // The seam a page's front matter, beyond its name, is rendered into, ahead of its body.
-  const main = html;
+/** A front matter value as table content: a mapping a nested table of its keys and values, a
+ * sequence a one-row table of its items, as GitHub nests them; any other value its text, escaped,
+ * and null nothing. */
+function cell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) {
+    return `<table><tbody><tr>${value.map((item) => `<td>${cell(item)}</td>`).join("")}</tr></tbody></table>`;
+  }
+  if (typeof value === "object") {
+    return table(value as Record<string, unknown>, "");
+  }
+  return escape(String(value));
+}
+
+/** A mapping as a table of its keys and their values, one row each, in source order. */
+function table(data: Record<string, unknown>, attributes: string): string {
+  const rows = Object.entries(data).map(
+    ([key, value]) => `<tr><th scope="row">${escape(key)}</th><td>${cell(value)}</td></tr>`,
+  );
+  return `<table${attributes}><tbody>${rows.join("")}</tbody></table>`;
+}
+
+/** The page's front matter as its table, ahead of its body: nothing for a file with none, or with
+ * an empty one. */
+export function frontMatterTable(data: Rendered["data"]): string {
+  if (data === null || Object.keys(data).length === 0) return "";
+  return `${table(data, ' class="front-matter"')}\n`;
+}
+
+/** Fills the shell with a rendered page: its title, and its front matter's table and its body in
+ * <main>. */
+function fill(shell: string, { data, title, html }: Rendered): string {
+  const main = frontMatterTable(data) + html;
   return shell
-    .replace(/<title>[^<]*<\/title>/, () => `<title>${escape(String(data.name))}</title>`)
+    .replace(/<title>[^<]*<\/title>/, () => `<title>${escape(title)}</title>`)
     .replace("<main></main>", () => `<main>\n${main}</main>`);
 }
 

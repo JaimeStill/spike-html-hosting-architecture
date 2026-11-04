@@ -3,7 +3,11 @@
 // script the build rewrote, so its sheet is adopted with no stylesheet fetched for it. From the
 // index, every link into the site is followed, breadth first, and each page reached loads with a
 // 2xx, its one module script, the entry, render-blocking, every request under the base and none
-// failed, and its title its source's front matter name. Every in-site link reaches a built page,
+// failed, and its title its source's front matter name, or, for a source with no name, its first
+// h1's text. A page whose source has front matter opens its main with the front matter's table,
+// one row per key in source order, each key and value as the source holds it, and shows no key's
+// line as body text, a paragraph or a heading; a page whose source has none shows no table. Every
+// in-site link reaches a built page,
 // and an element with its fragment's id when it has one. The crawl checks a page for every file
 // content.json records, and no other: a page no link from the index reaches is crawled from once
 // the links run out, and named in the test's diagnostics. Nothing here names a site: a site that
@@ -28,17 +32,30 @@ import { base } from "../../vite.config.ts";
 
 const root = join(import.meta.dirname, "../..");
 
+/** A front matter value's text, as its cell's textContent: a sequence's or a mapping's nested
+ * table its items', or its keys' and values', text run together, and null nothing. */
+const text = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) return value.map(text).join("");
+  if (typeof value === "object") {
+    return Object.entries(value)
+      .map(([key, item]) => key + text(item))
+      .join("");
+  }
+  return String(value);
+};
+
 /** Each copied file's page, by its path under the base (x.md at x.html, dir/README.md at dir/),
- * to the title it must carry: its front matter's name. */
-const titles = new Map(
+ * to its source's front matter, null when it has none, read with yaml as the build reads it. */
+const sources = new Map(
   Object.keys(content.files).map((path) => {
     const dir = posix.dirname(path) === "." ? "" : `${posix.dirname(path)}/`;
     const page =
       posix.basename(path) === "README.md" ? dir : `${dir}${posix.basename(path, ".md")}.html`;
-    const text = readFileSync(join(root, "content", path), "utf8");
-    const name: unknown = parse(/^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] ?? "")?.name;
-    assert.equal(typeof name, "string", `${path} has a front matter name`);
-    return [page, name as string];
+    const source = readFileSync(join(root, "content", path), "utf8");
+    const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
+    const data = match ? ((parse(match[1]) ?? {}) as Record<string, unknown>) : null;
+    return [page, data];
   }),
 );
 
@@ -175,7 +192,7 @@ describe("the site under its base", () => {
     }
   });
 
-  test("crawls every page from the index, each loaded and titled, its links resolving", async (t) => {
+  test("crawls every page from the index, each loaded, titled, and its front matter a table, its links resolving", async (t) => {
     const site = `${origin}${base}`;
     /** Each page reached, by its URL, to the ids its elements carry. */
     const reached = new Map<string, Set<string>>();
@@ -185,7 +202,7 @@ describe("the site under its base", () => {
      * starts again from the first page not reached, so each is checked as a linked one is. */
     const unreachable: string[] = [];
     const next = (): string | undefined => {
-      const url = [...titles.keys()].map((path) => `${site}${path}`).find((u) => !reached.has(u));
+      const url = [...sources.keys()].map((path) => `${site}${path}`).find((u) => !reached.has(u));
       if (url !== undefined) unreachable.push(url.slice(site.length));
       return url;
     };
@@ -199,8 +216,48 @@ describe("the site under its base", () => {
         assertLoaded(url, take());
         assert.deepEqual(await page.evaluate(blocking), [true], `${url}: its entry blocks render`);
         const path = url.slice(site.length);
-        assert.ok(titles.has(path), `${url} is a copied file's page`);
-        assert.equal(await page.evaluate("document.title"), titles.get(path), `${url}'s title`);
+        assert.ok(sources.has(path), `${url} is a copied file's page`);
+        const data = sources.get(path) ?? null;
+        const shown: {
+          title: string;
+          h1: string | null;
+          tables: number;
+          rows: string[][] | null;
+          body: string[];
+        } = await page.evaluate(`(() => {
+          const table = document.querySelector("main > table.front-matter:first-child");
+          return {
+            title: document.title,
+            h1: document.querySelector("main h1")?.textContent.trim() ?? null,
+            tables: document.querySelectorAll("table.front-matter").length,
+            rows: table && [...table.tBodies[0].rows].map((row) =>
+              [...row.cells].map((cell) => cell.textContent)),
+            body: [...document.querySelectorAll("main p, main :is(h1, h2, h3, h4, h5, h6)")]
+              .filter((element) => !element.closest("table.front-matter"))
+              .map((element) => element.textContent),
+          };
+        })()`);
+        const name = data?.name;
+        assert.equal(shown.title, typeof name === "string" ? name : shown.h1, `${url}'s title`);
+        assert.ok(shown.title, `${url} has a title`);
+        if (data === null || Object.keys(data).length === 0) {
+          assert.equal(shown.tables, 0, `${url}: no front matter, no table`);
+        } else {
+          assert.equal(shown.tables, 1, `${url}: one front matter table`);
+          assert.deepEqual(
+            shown.rows,
+            Object.entries(data).map(([key, value]) => [key, text(value)]),
+            `${url}: its main opens with its front matter's table, a row per key in order`,
+          );
+          for (const [key, value] of Object.entries(data)) {
+            const line = `${key}: ${text(value)}`;
+            assert.deepEqual(
+              shown.body.filter((body) => body.includes(line)),
+              [],
+              `${url}: ${line} isn't body text`,
+            );
+          }
+        }
 
         const { ids, hrefs }: { ids: string[]; hrefs: string[] } = await page.evaluate(`({
           ids: [...document.querySelectorAll("[id]")].map((element) => element.id),
@@ -225,7 +282,7 @@ describe("the site under its base", () => {
       }
       assert.deepEqual(
         [...reached.keys()].map((url) => url.slice(site.length)).sort(),
-        [...titles.keys()].sort(),
+        [...sources.keys()].sort(),
         "the crawl checked every copied file's page, and no other",
       );
     } finally {
