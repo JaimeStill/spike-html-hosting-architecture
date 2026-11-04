@@ -1,8 +1,9 @@
 // mise run screenshots' command, the tooling's spike-html-apps-screenshots on
 // scripts/screenshots.config.ts, run as the task runs it: the index alone, light alone, to the
-// terminal, with TMPDIR a scratch directory of its own. The run exits 0, prints each capture's
-// file under that TMPDIR, and leaves none of them, nor the directory it made for them, behind; with --keep, the same run leaves them,
-// so the first run's empty TMPDIR is the output's cleanup, not a capture that never wrote.
+// terminal, with TMPDIR a scratch directory of its own and node's compile cache, which writes
+// there too, off. The run exits 0, prints each capture's file under that TMPDIR, and leaves it
+// empty: none of the files, nor the directory it made for them. With --keep, the same run leaves
+// them, so the first run's empty TMPDIR is the output's cleanup, not a capture that never wrote.
 // The scratch directory is removed after.
 
 import assert from "node:assert/strict";
@@ -18,8 +19,8 @@ const scratch = mkdtempSync(join(tmpdir(), "screenshots-test."));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
 /** Runs the command on the index, light, to the terminal, with TMPDIR a fresh directory under the
- * scratch one; returns its exit status, its stderr, the capture files it printed, and its
- * TMPDIR's files after, each relative to it. */
+ * scratch one and node's compile cache off; returns its exit status, its stderr, the capture files
+ * it printed, and its TMPDIR's files after, each relative to it. */
 function run(...flags: string[]): {
   status: number | null;
   stderr: string;
@@ -31,7 +32,7 @@ function run(...flags: string[]): {
   const args = ["scripts/screenshots.config.ts", "--page", "index", "--scheme", "light"];
   const { status, stdout, stderr } = spawnSync(bin, [...args, "--output", "terminal", ...flags], {
     cwd: root,
-    env: { ...process.env, TMPDIR: dir },
+    env: { ...process.env, TMPDIR: dir, NODE_DISABLE_COMPILE_CACHE: "1" },
     encoding: "utf8",
   });
   const printed = stdout
@@ -48,7 +49,7 @@ function run(...flags: string[]): {
 }
 
 describe("mise run screenshots' command", () => {
-  test("captures the index under TMPDIR and leaves no capture file there", () => {
+  test("captures the index under TMPDIR and leaves nothing there", () => {
     const { status, stderr, printed, left } = run();
     assert.equal(status, 0, stderr);
     // The index's four states: whole, wide and narrow, and the theme menu open at each.
@@ -58,12 +59,7 @@ describe("mise run screenshots' command", () => {
         `a capture of index-${state} among ${printed}`,
       );
     }
-    // Node's compile cache writes under TMPDIR too: the captures are the bin's screenshots.*
-    // directory and the .png files.
-    assert.deepEqual(
-      left.filter((path) => path.startsWith("screenshots.") || path.endsWith(".png")),
-      [],
-    );
+    assert.deepEqual(left, [], "TMPDIR is left empty");
   });
 
   test("with --keep, leaves every capture file it printed", () => {
