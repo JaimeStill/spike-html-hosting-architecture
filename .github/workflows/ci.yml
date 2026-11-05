@@ -15,4 +15,4 @@ permissions:
 
 jobs:
   check:
-    uses: JaimeStill/spike-html-hosting-sdk/.github/workflows/site-ci.yml@v0.1.0
+    uses: JaimeStill/spike-html-hosting-sdk/.github/workflows/site-ci.yml@v0.2.0
