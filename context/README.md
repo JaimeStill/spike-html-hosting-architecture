@@ -8,8 +8,8 @@ context records only working knowledge the code does not express.
   8706d04, and `content.json` records the repository, the commit, and each file's git blob hash.
   STANDARDS.md records this exception to the per-file provenance line.
 - The shared files come from spike-html-hosting-sdk by tag. The site was scaffolded at v0.1.0
-  and pins v0.3.1. It keeps pace by bumping the tag in `package.json` and in both workflows'
-  `uses:` lines. The v0.3.1 shell loads spike-html-hosting-components at v0.2.2, the tag the
+  and pins v0.4.0. It keeps pace by bumping the tag in `package.json` and in both workflows'
+  `uses:` lines. The v0.4.0 shell loads spike-html-hosting-components at v0.3.0, the tag the
   template names.
 - The renderer, the stylesheet, the shell and browser checks, the capture run, the content check,
   the ESLint, Prettier, and tsconfig bases, and the currency bin are the SDK's exports, so a tag
