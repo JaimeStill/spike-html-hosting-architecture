@@ -9,7 +9,7 @@ context records only working knowledge the code does not express.
   STANDARDS.md records this exception to the per-file provenance line.
 - The shared files come from spike-html-hosting-sdk by tag. The site was scaffolded at v0.1.0
   and pins v0.5.0. It keeps pace by bumping the tag in `package.json` and in both workflows'
-  `uses:` lines. The v0.5.0 shell loads spike-html-hosting-components at v0.4.0 and its glyphs
+  `uses:` lines. The v0.5.0 shell loads spike-html-hosting-components at v0.4.0, and its glyphs
   come from spike-html-hosting-icons at v0.1.0, the tags the template names.
 - The renderer, the stylesheet, the shell and browser checks, the capture run, the content check,
   the ESLint, Prettier, and tsconfig bases, and the currency bin are the SDK's exports, so a tag
